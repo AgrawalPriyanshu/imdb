@@ -21,6 +21,8 @@ from django.urls import path, include
 from rest_framework_swagger.views import get_swagger_view
 
 from movies.routers import router
+from movies.views import LoginView, LogoutView
+
 schema_view = get_swagger_view(title='IMDB APIs')
 
 urlpatterns = [
@@ -28,4 +30,8 @@ urlpatterns = [
     # path('add_movie/', MoviesView.as_view()),
     path('api/', include(router.urls)),
     url(r'^docs/', schema_view),
+    path('api/v1/auth/login/', LoginView.as_view()),
+    path('api/v1/auth/logout/', LogoutView.as_view()),
+    path('rest-auth/registration/', include('rest_auth.registration.urls')),
+
 ]

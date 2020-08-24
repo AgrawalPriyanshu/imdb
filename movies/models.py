@@ -1,3 +1,4 @@
+from django.contrib.auth.models import User
 from django.db import models
 
 
@@ -33,3 +34,12 @@ class Movie(models.Model):
     def __str__(self):
         return '{}'.format(self.name)
 
+
+class Watchlist(models.Model):
+    movies = models.ManyToManyField(Movie)
+    users = models.OneToOneField(User, on_delete=models.CASCADE)
+
+
+class Watchedlist(models.Model):
+    movies = models.ManyToManyField(Movie)
+    users = models.OneToOneField(User, on_delete=models.CASCADE)

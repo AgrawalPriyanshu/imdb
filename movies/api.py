@@ -1,23 +1,77 @@
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.authentication import BasicAuthentication
+from rest_framework.authentication import BasicAuthentication, TokenAuthentication
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.viewsets import ModelViewSet
 
-from movies.models import Movie
-from movies.serializers import MovieSerializer
+from movies.models import Movie, Watchlist, Watchedlist, Genre
+from movies.serializers import MovieSerializer, WatchlistSerializer, WatchedlistSerializer
+
+import requests
+from bs4 import BeautifulSoup
+import json
+
 
 
 class MovieViewset(ModelViewSet):
-    authentication_classes = [BasicAuthentication]
+    authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     queryset = Movie.objects.all()
     serializer_class = MovieSerializer
     lookup_field = 'pk'
+
+    @action(detail=False, methods=['POST'])
+    def update_database(self, request):
+        URL = request.data["url"]
+        page = requests.get(URL)
+
+        soup = BeautifulSoup(page.content, 'html.parser')
+        results = soup.find_all('td', class_="posterColumn")
+        link_list = []
+        for result in results:
+            link = result.find('a')['href']
+            link_list.append(link)
+
+        movie_list = []
+        for link in link_list:
+            mv_url = 'https://www.imdb.com/' + link
+            mv_page = requests.get(mv_url)
+            mv_soup = BeautifulSoup(mv_page.content, 'html.parser')
+            mv_names = mv_soup.find_all('h1', class_="")
+            if mv_names == []:
+                continue
+            mv_name = mv_names[0].text
+            mv_ratings = mv_soup.find_all('span', class_="rating")
+            if mv_ratings == []:
+                mv_rating = 5
+            else:
+                mv_rating = mv_ratings[0].text
+            mv_genres = mv_soup.find_all('div', class_="see-more inline canwrap")
+            mv_genres = mv_genres[-1].text.split("|")
+            genre_list = []
+            for genre in mv_genres:
+                g = genre[genre.index(" ") + 1:-1]
+                genre_list.append(g)
+            d = {'movie_name': mv_name, 'rating': mv_rating, 'genres': genre_list}
+            movie_list.append(d)
+
+            mv, created = Movie.objects.get_or_create(name=mv_name, imdb_score=float(mv_rating.split('/')[0]),
+                                                      popularity=float(mv_rating.split('/')[0]) * 10)
+            if created:
+                mv.save()
+            for g in genre_list:
+                gnr, is_created = Genre.objects.get_or_create(genre=g)
+                if is_created:
+                    gnr.save()
+                    mv.genres.add(gnr)
+                else:
+                    mv.genres.add(gnr)
+        return Response(json.dumps(movie_list))
 
     @action(detail=False)
     def search_movie(self, request):
@@ -25,6 +79,62 @@ class MovieViewset(ModelViewSet):
         queryset = Movie.objects.filter(name__icontains=keyword)
         serializer = MovieSerializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=False)
+    def get_watchlist(self, request):
+        keyword = request.GET.get('q', '')
+        queryset = Watchlist.objects.filter(users=request.user).values_list('movies')
+        movie_id = [i[0] for i in queryset]
+        movies = Movie.objects.filter(id__in=movie_id)
+        serializer = MovieSerializer(movies, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False)
+    def get_watchedlist(self, request):
+        keyword = request.GET.get('q', '')
+        queryset = Watchedlist.objects.filter(users=request.user).values_list('movies')
+        movie_id = [i[0] for i in queryset]
+        movies = Movie.objects.filter(id__in=movie_id)
+        serializer = MovieSerializer(movies, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['POST'])
+    def add_to_watch(self, request):
+        serializer = WatchlistSerializer(data=request.data)
+        if serializer.is_valid():
+            user = request.user
+            movie_obj = serializer.validated_data.get('movies')
+            obj, created = Watchlist.objects.get_or_create(
+                users=user
+            )
+            if created:
+                obj.save()
+            try:
+                obj.movies.add(movie_obj[0])
+            except Exception as e:
+                return HttpResponse(content={'error': e})
+            return Response(serializer.data)
+        else:
+            return Response({"msg": "movie not found with this id"}, status=status.HTTP_204_NO_CONTENT, headers=None)
+
+    @action(detail=False, methods=['POST'])
+    def mark_watched(self, request):
+        serializer = WatchedlistSerializer(data=request.data)
+        if serializer.is_valid():
+            user = request.user
+            movie_obj = serializer.validated_data.get('movies')
+            obj, created = Watchedlist.objects.get_or_create(
+                users=user
+            )
+            if created:
+                obj.save()
+            try:
+                obj.movies.add(movie_obj[0])
+            except Exception as e:
+                return HttpResponse(content={'error': e})
+            return Response(serializer.data)
+        else:
+            return Response({"msg": "movie not found with this id"}, status=status.HTTP_204_NO_CONTENT, headers=None)
 
     def get_serializer(self, *args, **kwargs):
         serializer_class = self.get_serializer_class()
